@@ -63,7 +63,7 @@ class TaskList:
             if task.preemptable and self.is_preemtive():
                 process_time = min(task.min_quantum, task.remaining_time)
                 # Schedule in quantum granularity
-                print(f'[{clock}]: {task.name}, Process time: {process_time} (Remaining time = {task.remaining_time - process_time})')
+                # print(f'[{clock}]: {task.name}, Process time: {process_time} (Remaining time = {task.remaining_time - process_time})')
                 task.remaining_time -=  process_time
                 clock += process_time
                 if task.remaining_time <= 0:
@@ -71,7 +71,7 @@ class TaskList:
                     self.unscheduled_task_list.remove(task)
             else:
                 process_time = task.remaining_time
-                print(f'[{clock}]: {task.name}, Process time: {process_time} (Non-preempted)')
+                # print(f'[{clock}]: {task.name}, Process time: {process_time} (Non-preempted)')
                 task.remaining_time = 0
                 clock += process_time
                 waiting_time += (clock - task.arrival_time)
