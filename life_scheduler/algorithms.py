@@ -35,37 +35,35 @@ class ScheduledTasks:
     # TODO: should also be clock-agnostic...
     def __init__(self):
         self.scheduled_tasks = {}
-        self.curr_clock = 0
         self.waiting_time = 0
         self.makespan = 0  # a.k.a turnaround time
         self.lateness = 0
         self.deadline_missed = 0
 
-    def add_task(self, task, process_time):
+    def add_task(self,task, clock, process_time):
         # Add a task into the queue
         # TODO: should there be a sanity check?
-        if self.curr_clock < task.arrival_time:
+        # if self.curr_clock < task.arrival_time:
             # Update clock to match arrival time
-            self.curr_clock = max(task.arrival_time, self.curr_clock)
+            # self.curr_clock = max(task.arrival_time, self.curr_clock)
 
         # TODO: Should it be copied or referenced? Copy for now
         copied_task = copy.deepcopy(task)
         copied_task.process_time = process_time
 
-        self.scheduled_tasks[self.curr_clock] = copied_task
+        self.scheduled_tasks[clock] = copied_task
         # TODO: each task should have its own scheduled time / departure time
-        self.curr_clock += process_time
-        self.update_statistics(task)
+        self.update_statistics(task, clock)
 
-    def update_statistics(self, task):
+    def update_statistics(self, task, clock):
         # Update statistics based on scheduled task
         if task.finished():
             # FIX: The use of curr_clock is not clean?
             # Waiting time (or flow time): from arrival time -> finish task
-            self.makespan += (self.curr_clock - task.arrival_time)
+            self.makespan += (clock - task.arrival_time)
             # Lateness: deviation from deadline.
             # Negative lateness is earliness, positve lateness is tardiness
-            lateness = (task.deadline - self.curr_clock)
+            lateness = (task.deadline - clock)
             self.lateness += lateness
             if lateness < 0:
                 # self.deadline_missed.append((task, self.curr_clock))
@@ -111,14 +109,11 @@ class ScheduledTasks:
         print(f'Average lateness : {self.lateness}')
         print(f'Deadline missed: {self.deadline_missed}')
     
-
-        # print(f'Deadlines missed:')
         # for (task, time) in self.deadline_missed:
         #     print(f'[{time}], {task.name}, (deadline: {task.deadline})')
 
 
 class Scheduler:
-    # TODO: Maybe this should also be algorithm-agnostic
     def __init__(self, preemtive):
         self.preemtive = preemtive
 
@@ -130,19 +125,20 @@ class Scheduler:
         all_task_list = copy.copy(self.unscheduled_task_list)
         # self.sorted_unscheduled_task_list.sort(key=lambda t: t.arrival_time)
 
+        clock = 0
         # Sort the list first
         self.sort_task_list()
         scheduled_tasks = ScheduledTasks()
         while self.unscheduled_task_list:
-            task = self.get_next_task(scheduled_tasks.curr_clock)
+            task = self.get_next_task(clock)
 
             if task.preemptable and self.preemtive:
                 # Schedule in quantum granularity
-                # TODO: preemption should be added here
+                # TODO: preemption should be handled here
                 # It should also check if next arrival task have smaller time or not ...
                 # time_until_next_event_arrive = curr_clock -  
                 all_task_list.remove(task)
-                next_arrival =  min(all_task_list, key=attrgetter('arrival_time')).arrival_time - scheduled_tasks.curr_clock
+                next_arrival =  min(all_task_list, key=attrgetter('arrival_time')).arrival_time - clock 
                 all_task_list.append(task)
                 if next_arrival > 0:
                     process_time = min(task.min_quantum, task.remaining_time, next_arrival)
@@ -152,40 +148,44 @@ class Scheduler:
                 process_time = task.remaining_time
             # task is scheduled
             task.remaining_time -= process_time
-            scheduled_tasks.add_task(task, process_time)
+            scheduled_tasks.add_task(task, clock, process_time)
+
+            # Finally, increment clock
+            clock += process_time
             if task.remaining_time <= 0:
                 self.unscheduled_task_list.remove(task)
 
         scheduled_tasks.finalize()
         return scheduled_tasks
 
-    def try_get_task(self, curr_clock, index):
+    def try_get_task(self, clock, index):
         # Try to get the task that arrive before current time
         task = self.unscheduled_task_list[index]
         # Scan for next candidate
-        num_try = 1
-        while task.arrival_time > curr_clock:
-            index = (index + 1) % len(self.unscheduled_task_list)
-            task = self.unscheduled_task_list[index]
-            if task.arrival_time <= curr_clock:
-                break
-            num_try += 1
-            if num_try == len(self.unscheduled_task_list):
-                task = None
-                break
+        # num_try = 1
+        if task.arrival_time > clock:
+            for i in range(1, len(self.unscheduled_task_list)):
+            # while task.arrival_time >= clock:
+                index = (index + 1) % len(self.unscheduled_task_list)
+                task = self.unscheduled_task_list[index]
+                if task.arrival_time < clock:
+                    break
+                if i == len(self.unscheduled_task_list):
+                    task = None
+                    break
 
         # Failed to  get a candidate, get the minimim candidate
         if task is None:
             task = min(self.unscheduled_task_list,
                        key=attrgetter('arrival_time'))
             # update arrival time
-            curr_clock = task.arrival_time
+            clock = task.arrival_time
         return task
 
-    def get_next_task(self, curr_clock):
+    def get_next_task(self, clock):
         # Get next task based on the algorithm
         self.sort_task_list()
-        task = self.try_get_task(curr_clock, 0)
+        task = self.try_get_task(clock, 0)
         return task
         # Shortest remaining time first is a preemtive mode of SJF
         # Earliest due date
@@ -200,21 +200,25 @@ class RRScheduler(Scheduler):
     def sort_task_list(self):
         self.unscheduled_task_list.sort(key=lambda t: t.arrival_time)
 
-    def get_next_task(self, curr_clock):
+    def get_next_task(self, clock):
         self.rr_index = (self.rr_index + 1) % len(self.unscheduled_task_list)
-        task = self.try_get_task(curr_clock, self.rr_index)
-        # Remember the index
+        task = self.try_get_task(clock, self.rr_index)
         return task
 
 
 class SJFScheduler(Scheduler):
-    # TODO: Support preemption
     def __init__(self, preemtive=False):
         Scheduler.__init__(self, preemtive)
 
     def sort_task_list(self):
         self.unscheduled_task_list.sort(key=lambda t: t.estimated_time)
 
+class LJFScheduler(Scheduler):
+    def __init__(self, preemtive=False):
+        Scheduler.__init__(self, preemtive)
+
+    def sort_task_list(self):
+        self.unscheduled_task_list.sort(key=lambda t: t.estimated_time, reverse=True)
 
 class FCFSScheduler(Scheduler):
     def __init__(self, preemtive=False):
@@ -244,6 +248,8 @@ def get_scheduler_from_string(name, preemptive=False):
         scheduler = EDFScheduler(preemptive)
     if name == "SJF":
         scheduler = SJFScheduler(preemptive)
+    if name == "LJF":
+        scheduler = LJFScheduler(preemptive)
 
     assert scheduler is not None, "Unknown scheduler name"
     return scheduler
@@ -258,9 +264,10 @@ def test_scheduler(algorithm, task_list, preemptive = False):
     scheduled_tasks.print_statistics()
 
 def test_all_schedulers(task_list):
-    all_schedulers = ["FCFS", "EDF", "RR", "SJF"]
+    all_schedulers = ["FCFS", "EDF", "RR", "SJF", "LJF"]
     for sched in all_schedulers:
-        test_scheduler(sched, task_list)
+        test_scheduler(sched, task_list, False)
+        test_scheduler(sched, task_list, True)
 
 def test_schedulers_random_tasks(num_tasks = 100):
     print("------ Random tasks test -------")
@@ -278,19 +285,19 @@ def test_schedulers_random_tasks(num_tasks = 100):
 def test_schedulers_basic():
     print("Basic test")
     task_list = []
-    task_list.append(Task(name="Task_1", id=0, arrival_time=2, estimated_time=6,
-                     deadline=10, min_quantum=2, priority=1, preemptible=True))
-    task_list.append(Task(name="Task_2", id=1, arrival_time=5, estimated_time=3,
-                     deadline=11, min_quantum=2, priority=2, preemptible=True))
-    task_list.append(Task(name="Task_3", id=2, arrival_time=1, estimated_time=8,
-                     deadline=12, min_quantum=2, priority=2, preemptible=True))
-    task_list.append(Task(name="Task_4", id=3, arrival_time=0, estimated_time=3,
-                     deadline=13, min_quantum=2, priority=3, preemptible=True))
-    task_list.append(Task(name="Task_5", id=4, arrival_time=4, estimated_time=4,
-                     deadline=14, min_quantum=2, priority=1, preemptible=True))
+    task_list.append(Task(name="A", id=0, arrival_time=0, estimated_time=3, deadline=10, min_quantum=2, priority=1, preemptible=True))
+    task_list.append(Task(name="B", id=1, arrival_time=2, estimated_time=6, deadline=11, min_quantum=2, priority=2, preemptible=True))
+    task_list.append(Task(name="C", id=2, arrival_time=3, estimated_time=10, deadline=12, min_quantum=2, priority=2, preemptible=True))
+    task_list.append(Task(name="D", id=3, arrival_time=7, estimated_time=1, deadline=13, min_quantum=2, priority=3, preemptible=True))
+    task_list.append(Task(name="E", id=4, arrival_time=8, estimated_time=5, deadline=14, min_quantum=2, priority=1, preemptible=True))
+    task_list.append(Task(name="F", id=5, arrival_time=15, estimated_time=2, deadline=14, min_quantum=2, priority=1, preemptible=True))
+    task_list.append(Task(name="G", id=6, arrival_time=25, estimated_time=7, deadline=14, min_quantum=2, priority=1, preemptible=True))
 
     # test_all_schedulers(task_list)
+
     test_scheduler("SJF",task_list, preemptive = True)
+    # test_scheduler("EDF",task_list, preemptive = True)
+    # test_scheduler("EDF",task_list, preemptive = False)
 
 test_schedulers_basic()
 # test_schedulers_random_tasks(1000)
