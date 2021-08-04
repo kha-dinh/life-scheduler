@@ -1,9 +1,6 @@
 import random
 from operator import attrgetter
 import copy
-from re import I
-from queue import Queue
-import re
 
 
 class Task:
@@ -29,8 +26,20 @@ class Task:
         # TODO
         self.prerequisite = prerequisite
 
+        self.scheduled_time = []  # Maybe contains pairs of start and end
+        self.finish_time = 0
+
+    def add_scheduled_time(self, start, stop):
+        self.scheduled_time.append((start, stop))
+
     def finished(self):
         return self.remaining_time <= 0
+
+    def refill_quota(self):
+        self.quota = self.min_quantum
+
+    def name_elasped_time(self):
+        return f'{self.name}({self.estimated_time-self.remaining_time}/{self.estimated_time})'
 
 
 class ScheduledTasks:
@@ -55,10 +64,11 @@ class ScheduledTasks:
         # TODO: Should it be copied or referenced? Copy for now
         copied_task = copy.deepcopy(task)
         copied_task.process_time = process_time
+        copied_task.remaining_time -= process_time
 
         self.scheduled_tasks[clock] = copied_task
         # TODO: each task should have its own scheduled time / departure time
-        self.update_statistics(task, clock)
+        self.update_statistics(copied_task, clock)
 
     def update_statistics(self, task, clock):
         # Update statistics based on scheduled task
@@ -105,8 +115,7 @@ class ScheduledTasks:
 
     def print(self):
         for time, task in self.scheduled_tasks.items():
-            print(f'[{time} -> {time + task.process_time}]: {task.name} (arrival time: {task.arrival_time}, remaining time: {task.remaining_time}, deadline: {task.deadline})')
-
+            print(f'[{time} -> {time + task.process_time}]: {task.name} (remaining time: {task.remaining_time}, deadline: {task.deadline})')
     def print_statistics(self):
         print(f'Average makespan: {self.makespan}')
         print(f'Average lateness : {self.lateness}')
@@ -124,6 +133,7 @@ class Scheduler:
         self.completed = []
         self.active = None
         self.unscheduled_task_list = []
+        self.scheduled_tasks = ScheduledTasks()
         self.verbose = verbose
 
     def schedule(self, task_list):
@@ -148,58 +158,40 @@ class Scheduler:
         next_tick = 0
         while self.unscheduled_task_list:
             next_tick = self.process_tick(next_tick)
-            # self.active.quota -= next_tick
-            # self.active.remaining_time -= next_tick
-            # clock += next_tick
 
-            # self.process_tick(clock)
+        self.scheduled_tasks.finalize()
 
-            # task = self.get_next_task(clock)
-
-            # if task.preemptable and self.preemtive:
-            #     # Schedule in quantum granularity
-            #     # TODO: preemption should be handled here
-            #     # It should also check if next arrival task have smaller time or not ...
-            #     # time_until_next_event_arrive = curr_clock -
-            #     all_task_list.remove(task)
-            #     next_arrival =  min(all_task_list, key=attrgetter('arrival_time')).arrival_time - clock
-            #     all_task_list.append(task)
-            #     if next_arrival > 0:
-            #         process_time = min(task.min_quantum, task.remaining_time, next_arrival)
-            #     else:
-            #         process_time = min(task.min_quantum, task.remaining_time)
-            # else:
-            #     process_time = task.remaining_time
-            # # task is scheduled
-            # task.remaining_time -= process_time
-            # scheduled_tasks.add_task(task, clock, process_time)
-
-            # # Finally, increment clock
-            # clock += process_time
-            # if task.remaining_time <= 0:
-            #     self.unscheduled_task_list.remove(task)
-
-        # scheduled_tasks.finalize()
-        # return scheduled_tasks
-        
     def print_verbose(self, format):
         if self.verbose:
             print(format)
 
+    def print_lists(self):
+        if self.verbose:
+            print('Not arrived:', [
+                  f'{task.name_elasped_time()}' for task in self.not_arrived])
+            print('Pending:', [
+                  f'{task.name_elasped_time()}' for task in self.pending])
+            print(
+                'Active:', f'{self.active.name_elasped_time()}' if self.active else 'None')
+            print('Completed:', [
+                  f'{task.name_elasped_time()}' for task in self.completed])
+    def preemptible(self):
+        return self.active and self.active.preemptible and self.preemptive
+
     def process_tick(self, tick):
         self.clock += tick
         self.print_verbose(f'[Tick {self.clock}]:')
+        self.print_lists()
         if self.active:
-            running_task = self.active
-            if self.preemptive and running_task.preemptible:
-                running_task.quota -= tick
-            running_task.remaining_time -= tick
+            self.active.quota -= tick
+            self.active.remaining_time -= tick
+          
             self.print_verbose(
-                f'Execute Process {running_task.name}: {running_task.estimated_time-running_task.remaining_time}/{running_task.estimated_time}')
+                f'Execute Process {self.active.name_elasped_time()}')
             if self.active.remaining_time <= 0:
-                self.print_verbose(f'Process {running_task.name} retired')
-                self.unscheduled_task_list.remove(running_task)
-                self.completed.append(running_task)
+                self.print_verbose(f'Process {self.active.name} retired')
+                self.unscheduled_task_list.remove(self.active)
+                self.completed.append(self.active)
                 self.active = None
 
         # Move not_arrived -> arrived
@@ -216,6 +208,15 @@ class Scheduler:
             else:
                 arriving_task = None
                 break
+        
+        # Check if we should preempt
+        if self.preemptible():
+            if arriving_task or self.pending:
+                self.print_verbose(f'Preempted {self.active.name}')
+                self.pending.append(self.active)
+                self.active = None
+            elif self.active.quota <= 0:
+                self.active.refill_quota()
 
         # Move pending -> active
         if self.pending:
@@ -225,73 +226,43 @@ class Scheduler:
                 self.print_verbose(
                     f'Process {task.name} moved pending -> active')
                 self.active = task
-                self.active.quota = self.active.min_quantum
+                if self.preemptible():
+                    self.active.refill_quota()
                 self.pending.remove(task)
-            else:
-                running_task = self.active
-                # preempt task only when it used its quota
-                if self.preemptive and running_task.preemptible and running_task.quota <= 0:
-                    self.print_verbose(
-                        f'Preempted {running_task.name}, process {task.name} moved pending -> active')
-                    # preempt:
-                    self.active = task
-                    self.pending.remove(task)
-                    # Refresh quota
-                    running_task.quota = running_task.min_quantum
-                    self.pending.append(running_task)
+
+        # No disrupting event, so refil quota
+        # if not self.pending and not arriving_task and self.active.quota <= 0:
+        #     self.active.quota = self.active.min_quantum
 
        # Finally, return next tick?
         if self.active:
-            if self.preemptive and self.active.preemptible:
+            if self.preemptible():
                 if arriving_task:
-                    next_tick = min(self.active.quota, self.active.remaining_time, arriving_task.arrival_time - self.clock)
+                    next_tick = min(self.active.quota, self.active.remaining_time,
+                                    arriving_task.arrival_time - self.clock)
                 elif self.pending:
-                    next_tick = min(self.active.quota, self.active.remaining_time)
-                else :
+                    next_tick = min(self.active.quota,
+                                    self.active.remaining_time)
+                else:
                     next_tick = self.active.remaining_time
             else:
                 # Non-preemptible
-                if arriving_task:
-                    next_tick = min(self.active.remaining_time, arriving_task.arrival_time - self.clock)
-                else:
-                    next_tick = self.active.remaining_time
+                # if arriving_task:
+                    # next_tick = min(self.active.remaining_time,
+                                    # arriving_task.arrival_time - self.clock)
+                # else:
+                next_tick = self.active.remaining_time
+            self.scheduled_tasks.add_task(self.active, self.clock, next_tick)
         else:
-            next_tick = 0
-
+            if arriving_task:
+                next_tick = arriving_task.arrival_time - self.clock
+            else:
+                next_tick = 0
         return next_tick
-    # def get_task(self,clock,index):
-
-    def try_get_task(self, clock, index):
-        # Try to get the task that arrive before current time
-        task = self.unscheduled_task_list[index]
-        # Scan for next candidate
-        # num_try = 1
-        if task.arrival_time > clock:
-            for i in range(1, len(self.unscheduled_task_list)):
-                # while task.arrival_time >= clock:
-                index = (index + 1) % len(self.unscheduled_task_list)
-                task = self.unscheduled_task_list[index]
-                if task.arrival_time < clock:
-                    break
-                if i == len(self.unscheduled_task_list):
-                    task = None
-                    break
-
-        # Failed to  get a candidate, get the minimim candidate
-        if task is None:
-            task = min(self.unscheduled_task_list,
-                       key=attrgetter('arrival_time'))
-            # update arrival time
-            clock = task.arrival_time
-        return task
-
-    # def sort_task_list(self):
-        # self.pending.sort(key=lambda t: t.arrival_time)
 
     def get_next_task(self):
         # Get next task based on the algorithm
         self.sort_task_list()
-        # task = self.try_get_task(clock, 0)
         task = self.pending[0]
         return task
         # Shortest remaining time first is a preemtive mode of SJF
@@ -300,14 +271,15 @@ class Scheduler:
 
 
 class RRScheduler(Scheduler):
-    def __init__(self, preemtive=True):
-        Scheduler.__init__(self, preemtive)
+    def __init__(self, preemtive=False, verbose=False):
+        Scheduler.__init__(self, preemtive, verbose)
         self.rr_index = -1
 
     def sort_task_list(self):
-        self.pending.sort(key=lambda t: t.arrival_time)
+        # self.pending.sort(key=lambda t: t.arrival_time)
+        pass
 
-    def get_next_task(self, clock):
+    def get_next_task(self):
         self.rr_index = (self.rr_index + 1) % len(self.pending)
         # task = self.try_get_task(clock, self.rr_index)
         task = self.pending[self.rr_index]
@@ -315,16 +287,16 @@ class RRScheduler(Scheduler):
 
 
 class SJFScheduler(Scheduler):
-    def __init__(self, preemtive=False):
-        Scheduler.__init__(self, preemtive)
+    def __init__(self, preemtive=False, verbose=False):
+        Scheduler.__init__(self, preemtive, verbose)
 
     def sort_task_list(self):
         self.pending.sort(key=lambda t: t.estimated_time)
 
 
 class LJFScheduler(Scheduler):
-    def __init__(self, preemtive=False):
-        Scheduler.__init__(self, preemtive)
+    def __init__(self, preemtive=False, verbose=False):
+        Scheduler.__init__(self, preemtive, verbose)
 
     def sort_task_list(self):
         self.pending.sort(key=lambda t: t.estimated_time, reverse=True)
@@ -340,46 +312,46 @@ class FCFSScheduler(Scheduler):
 
 class EDFScheduler(Scheduler):
     # Earilest deadline First
-    def __init__(self, preemtive=False):
-        Scheduler.__init__(self, preemtive)
+    def __init__(self, preemtive=False, verbose=False):
+        Scheduler.__init__(self, preemtive, verbose)
 
     def sort_task_list(self):
         self.pending.sort(key=lambda t: t.deadline)
 
 
-def get_scheduler_from_string(name, preemptive=False):
+def get_scheduler_from_string(name, preemptive=False, verbose=False):
     # NOTE: Match case is so much cleaner here
     scheduler = None
     if name == "RR":
-        scheduler = RRScheduler(preemptive)
+        scheduler = RRScheduler(preemptive, verbose=verbose)
     if name == "FCFS":
-        scheduler = FCFSScheduler(preemptive, verbose=True)
+        scheduler = FCFSScheduler(preemptive, verbose=verbose)
     if name == "EDF":
-        scheduler = EDFScheduler(preemptive)
+        scheduler = EDFScheduler(preemptive, verbose=verbose)
     if name == "SJF":
-        scheduler = SJFScheduler(preemptive)
+        scheduler = SJFScheduler(preemptive, verbose=verbose)
     if name == "LJF":
-        scheduler = LJFScheduler(preemptive)
+        scheduler = LJFScheduler(preemptive, verbose=verbose)
 
     assert scheduler is not None, "Unknown scheduler name"
     return scheduler
 
 
-def test_scheduler(algorithm, task_list, preemptive=False):
+def test_scheduler(algorithm, task_list, preemptive=False, verbose=False):
     print(f'Testing scheduler with {algorithm} algorithm',
           '(preemptive)' if preemptive == True else '(non-preemptive)')
     # scheduler = Scheduler(algorithm)
-    scheduler = get_scheduler_from_string(algorithm, preemptive)
-    scheduled_tasks = scheduler.schedule(task_list)
-    # scheduled_tasks.print()
-    # scheduled_tasks.print_statistics()
+    scheduler = get_scheduler_from_string(algorithm, preemptive, verbose)
+    scheduler.schedule(task_list)
+    # scheduler.scheduled_tasks.print()
+    scheduler.scheduled_tasks.print_statistics()
 
 
-def test_all_schedulers(task_list):
+def test_all_schedulers(task_list, verbose=False):
     all_schedulers = ["FCFS", "EDF", "RR", "SJF", "LJF"]
     for sched in all_schedulers:
-        test_scheduler(sched, task_list, False)
-        test_scheduler(sched, task_list, True)
+        test_scheduler(sched, task_list, False, verbose)
+        test_scheduler(sched, task_list, True,verbose)
 
 
 def test_schedulers_random_tasks(num_tasks=100):
@@ -393,7 +365,7 @@ def test_schedulers_random_tasks(num_tasks=100):
         task_list.append(Task(name="Task_" + str(i), id=i, arrival_time=arrival_time,
                          estimated_time=random.randint(10, 100), deadline=arrival_time + random.randint(10, 1000)))
 
-    test_all_schedulers(task_list)
+    test_all_schedulers(task_list, verbose=False)
 
 
 def test_schedulers_basic():
@@ -414,13 +386,15 @@ def test_schedulers_basic():
     task_list.append(Task(name="G", id=6, arrival_time=25, estimated_time=7,
                      deadline=14, min_quantum=2, priority=1, preemptible=True))
 
-    # test_all_schedulers(task_list)
+    test_all_schedulers(task_list)
 
-    # test_scheduler("FCFS", task_list, preemptive=True)
-    test_scheduler("FCFS", task_list, preemptive=False)
+    # test_scheduler("FCFS", task_list, preemptive=False)
+    # test_scheduler("SJF", task_list, preemptive=True, verbose=True)
+    # test_scheduler("RR", task_list, preemptive=True, verbose=False)
     # test_scheduler("EDF",task_list, preemptive = True)
     # test_scheduler("EDF",task_list, preemptive = False)
 
 
-test_schedulers_basic()
-# test_schedulers_random_tasks(1000)
+# test_schedulers_basic()
+test_schedulers_random_tasks(10)
+
