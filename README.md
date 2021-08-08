@@ -1,4 +1,5 @@
-Life Scheduler
+
+⏰ Life Scheduler
 ========================
 
 ## Introduction
