@@ -14,10 +14,10 @@ This project aims to develop a scheduling application for real life tasks. Havin
 * The system should be flexible
 
 ## Plan
-[] Develop a generic task scheduler backend
-[] Have a prototype front end
-[] Adapt the task scheduler to real tasks
-[] Extend to a real application
+* [ ] Develop a generic task scheduler backend
+* [ ] Have a prototype front end
+* [ ] Adapt the task scheduler to real tasks
+* [ ] Extend to a real application
 
 ## References
 * https://www.tutorialspoint.com/operating_system/os_process_scheduling.htm
