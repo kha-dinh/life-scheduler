@@ -15,7 +15,7 @@ This project aims to develop a scheduling application for real life tasks. Havin
 * The system should be flexible
 
 ## Plan
-* [ ] Develop a generic task scheduler backend
+* [ ] Develop a generic task scheduling backend in python
 * [ ] Have a prototype front end
 * [ ] Adapt the task scheduler to real tasks
 * [ ] Extend to a real application
